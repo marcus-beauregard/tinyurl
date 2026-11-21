@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 )
@@ -20,15 +21,18 @@ func newStore() *store { return &store{m: make(map[string]string)} }
 
 func (s *store) put(code, url string) { s.mu.Lock(); s.m[code] = url; s.mu.Unlock() }
 func (s *store) get(code string) (string, bool) {
-	s.mu.RLock(); defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	u, ok := s.m[code]
 	return u, ok
 }
 
-func shortCode() string {
+func shortCode() (string, error) {
 	b := make([]byte, 4)
-	rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", b), nil
 }
 
 type handler struct{ s *store }
@@ -37,7 +41,11 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var req map[string]string
 		json.NewDecoder(r.Body).Decode(&req)
-		code := shortCode()
+		code, err := shortCode()
+		if err != nil {
+			http.Error(w, "short code generation failed", http.StatusInternalServerError)
+			return
+		}
 		h.s.put(code, req["url"])
 		json.NewEncoder(w).Encode(map[string]string{"short": "http://" + r.Host + "/" + code})
 		return
