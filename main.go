@@ -50,6 +50,11 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"short": "http://" + r.Host + "/" + code})
 		return
 	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	code := r.URL.Path[1:]
 	if u, ok := h.s.get(code); ok {
 		http.Redirect(w, r, u, http.StatusFound)

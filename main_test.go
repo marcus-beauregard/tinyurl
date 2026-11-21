@@ -53,3 +53,51 @@ func TestShortCodeSuccess(t *testing.T) {
 		t.Fatal("shortCode returned the zero code")
 	}
 }
+
+func TestHandlerRejectsUnsupportedMethods(t *testing.T) {
+	for _, method := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions, http.MethodTrace} {
+		for _, path := range []string{"/existing", "/missing"} {
+			t.Run(method+path, func(t *testing.T) {
+				s := newStore()
+				s.put("existing", "https://example.org")
+				rec := httptest.NewRecorder()
+				handler{s: s}.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+				if rec.Code != http.StatusMethodNotAllowed {
+					t.Errorf("status = %d, want 405", rec.Code)
+				}
+				if got := rec.Header().Get("Allow"); got != "GET, HEAD, POST" {
+					t.Errorf("Allow = %q", got)
+				}
+				if got := rec.Header().Get("Location"); got != "" {
+					t.Errorf("unexpected redirect to %q", got)
+				}
+				if got, ok := s.get("existing"); !ok || got != "https://example.org" {
+					t.Fatal("stored link changed")
+				}
+			})
+		}
+	}
+}
+
+func TestHandlerLookupMethods(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		for _, path := range []string{"/existing", "/missing"} {
+			t.Run(method+path, func(t *testing.T) {
+				s := newStore()
+				s.put("existing", "https://example.org")
+				rec := httptest.NewRecorder()
+				handler{s: s}.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+				wantStatus, wantLocation := http.StatusNotFound, ""
+				if path == "/existing" {
+					wantStatus, wantLocation = http.StatusFound, "https://example.org"
+				}
+				if rec.Code != wantStatus || rec.Header().Get("Location") != wantLocation {
+					t.Fatalf("status = %d, Location = %q; want %d, %q", rec.Code, rec.Header().Get("Location"), wantStatus, wantLocation)
+				}
+				if method == http.MethodHead && path == "/existing" && rec.Body.Len() != 0 {
+					t.Fatal("HEAD redirect wrote a body")
+				}
+			})
+		}
+	}
+}
