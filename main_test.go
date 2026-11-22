@@ -5,6 +5,8 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +40,51 @@ func TestEntropyFailureReturns500AndStoresNoCode(t *testing.T) {
 	}
 	if len(s.m) != 0 {
 		t.Fatalf("store has %d entries after entropy failure, want 0", len(s.m))
+	}
+}
+
+func TestShortLinkUsesRequestScheme(t *testing.T) {
+	tests := []struct {
+		name       string
+		tls        bool
+		forwarded  string
+		wantScheme string
+	}{
+		{name: "plain HTTP", wantScheme: "http://"},
+		{name: "TLS", tls: true, wantScheme: "https://"},
+		{name: "forwarded HTTPS", forwarded: "https", wantScheme: "https://"},
+		{name: "forwarded HTTP", forwarded: "http", wantScheme: "http://"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := handler{s: newStore()}
+			req := httptest.NewRequest(http.MethodPost, "http://example.com/", strings.NewReader(`{"url":"https://example.org"}`))
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+			}
+			if tc.forwarded != "" {
+				req.Header.Set("X-Forwarded-Proto", tc.forwarded)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			var resp struct {
+				Short string `json:"short"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response %q: %v", rec.Body.String(), err)
+			}
+			if !strings.HasPrefix(resp.Short, tc.wantScheme) {
+				t.Fatalf("short = %q, want prefix %q", resp.Short, tc.wantScheme)
+			}
+			if !strings.HasPrefix(resp.Short, tc.wantScheme+"example.com/") {
+				t.Fatalf("short = %q, want %qexample.com/<code>", resp.Short, tc.wantScheme)
+			}
+		})
 	}
 }
 
