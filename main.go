@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -37,6 +38,22 @@ func shortCode() (string, error) {
 
 type handler struct{ s *store }
 
+// requestScheme returns the scheme clients should use in links generated from
+// this request. A direct TLS connection is authoritative; behind a proxy the
+// original scheme is signalled by X-Forwarded-Proto, whose first value is the
+// one set by the outermost proxy.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		if first := strings.TrimSpace(strings.Split(proto, ",")[0]); first == "https" {
+			return "https"
+		}
+	}
+	return "http"
+}
+
 func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var req map[string]string
@@ -47,7 +64,7 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.s.put(code, req["url"])
-		json.NewEncoder(w).Encode(map[string]string{"short": "http://" + r.Host + "/" + code})
+		json.NewEncoder(w).Encode(map[string]string{"short": requestScheme(r) + "://" + r.Host + "/" + code})
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
